@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bot WhatsApp - Prospecção</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0f1117;
+      --bg-card: #1a1d27;
+      --bg-card-hover: #1e2130;
+      --bg-input: #13151d;
+      --border: #2a2d3a;
+      --text: #e4e6f0;
+      --text-muted: #8b8fa3;
+      --green: #25d366;
+      --green-dark: #1da851;
+      --green-glow: rgba(37, 211, 102, 0.15);
+      --red: #ff4d6a;
+      --red-glow: rgba(255, 77, 106, 0.15);
+      --yellow: #ffb84d;
+      --yellow-glow: rgba(255, 184, 77, 0.15);
+      --blue: #4d9fff;
+      --blue-glow: rgba(77, 159, 255, 0.15);
+      --purple: #a855f7;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ===== HEADER ===== */
+    .header {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header-logo {
+      width: 40px;
+      height: 40px;
+      background: var(--green);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+
+    .header-title h1 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .header-title span {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .status-badge.disconnected {
+      background: var(--red-glow);
+      color: var(--red);
+    }
+
+    .status-badge.connected {
+      background: var(--green-glow);
+      color: var(--green);
+    }
+
+    .status-badge.sending {
+      background: var(--blue-glow);
+      color: var(--blue);
+    }
+
+    .status-badge.paused {
+      background: var(--yellow-glow);
+      color: var(--yellow);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .status-badge.sending .status-dot,
+    .status-badge.connected .status-dot {
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ===== LAYOUT ===== */
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto auto 1fr;
+      gap: 20px;
+    }
+
+    /* ===== CARDS ===== */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-title .icon { font-size: 16px; }
+
+    /* ===== STATS ROW ===== */
+    .stats-row {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 32px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .stat-value.green { color: var(--green); }
+    .stat-value.red { color: var(--red); }
+    .stat-value.blue { color: var(--blue); }
+    .stat-value.yellow { color: var(--yellow); }
+
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* ===== QR CODE ===== */
+    .qr-section {
+      grid-column: 1 / -1;
+      display: none;
+      justify-content: center;
+    }
+
+    .qr-section.visible { display: flex; }
+
+    .qr-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 40px;
+      text-align: center;
+    }
+
+    .qr-card h2 {
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+
+    .qr-card p {
+      color: var(--text-muted);
+      margin-bottom: 24px;
+      font-size: 14px;
+    }
+
+    #qr-image {
+      border-radius: 12px;
+      background: white;
+      padding: 16px;
+    }
+
+    /* ===== CONFIG PANEL ===== */
+    .config-panel { grid-row: span 2; }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .form-group textarea,
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      transition: border-color 0.2s;
+      outline: none;
+    }
+
+    .form-group textarea:focus,
+    .form-group input:focus {
+      border-color: var(--green);
+    }
+
+    .form-group textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    /* ===== NÚMEROS ===== */
+    .numeros-area {
+      width: 100%;
+      min-height: 120px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-family: 'Inter', monospace;
+      font-size: 13px;
+      resize: vertical;
+      outline: none;
+    }
+
+    .numeros-area:focus { border-color: var(--green); }
+
+    .numeros-count {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+
+    /* ===== BOTÕES ===== */
+    .btn {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 8px;
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .btn-start {
+      background: var(--green);
+      color: #000;
+      width: 100%;
+      justify-content: center;
+      padding: 14px;
+      font-size: 15px;
+      margin-top: 8px;
+    }
+
+    .btn-start:hover:not(:disabled) {
+      background: var(--green-dark);
+      box-shadow: 0 0 20px var(--green-glow);
+    }
+
+    .btn-stop {
+      background: var(--red);
+      color: #fff;
+      width: 100%;
+      justify-content: center;
+      padding: 14px;
+      font-size: 15px;
+      margin-top: 8px;
+    }
+
+    .btn-stop:hover:not(:disabled) { opacity: 0.9; }
+
+    .btn-pause {
+      background: var(--yellow);
+      color: #000;
+      width: 100%;
+      justify-content: center;
+      padding: 14px;
+      font-size: 15px;
+      margin-top: 8px;
+    }
+
+    .btn-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .btn-save {
+      background: var(--blue);
+      color: #fff;
+      width: 100%;
+      justify-content: center;
+      padding: 12px;
+      margin-top: 8px;
+    }
+
+    .btn-save:hover:not(:disabled) { opacity: 0.9; }
+
+    /* ===== LOG ===== */
+    .log-panel { grid-row: span 2; }
+
+    .log-container {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      height: 460px;
+      overflow-y: auto;
+      padding: 12px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 12px;
+      line-height: 1.8;
+    }
+
+    .log-container::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .log-container::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .log-container::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+
+    .log-entry {
+      padding: 2px 0;
+      display: flex;
+      gap: 8px;
+    }
+
+    .log-time {
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .log-entry.info .log-msg { color: var(--blue); }
+    .log-entry.sucesso .log-msg { color: var(--green); }
+    .log-entry.erro .log-msg { color: var(--red); }
+    .log-entry.aviso .log-msg { color: var(--yellow); }
+    .log-entry.pausa .log-msg { color: var(--purple); }
+
+    .log-msg { word-break: break-word; }
+
+    /* ===== PROGRESS BAR ===== */
+    .progress-wrapper {
+      margin-top: 12px;
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 8px;
+      background: var(--bg-input);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--green), var(--blue));
+      border-radius: 4px;
+      transition: width 0.5s ease;
+      width: 0%;
+    }
+
+    .progress-text {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 6px;
+      text-align: right;
+    }
+
+    /* ===== RESPONSIVE ===== */
+    @media (max-width: 900px) {
+      .container {
+        grid-template-columns: 1fr;
+      }
+
+      .stats-row {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .config-panel, .log-panel {
+        grid-row: auto;
+      }
+    }
+
+    /* ===== TAB NAVIGATION ===== */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 16px;
+      background: var(--bg-input);
+      border-radius: 8px;
+      padding: 4px;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 8px 12px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+
+    .tab.active {
+      background: var(--bg-card);
+      color: var(--text);
+    }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ===== TOAST ===== */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      z-index: 1000;
+      animation: slideIn 0.3s ease, fadeOut 0.3s ease 2.7s;
+      opacity: 0;
+      animation-fill-mode: forwards;
+    }
+
+    .toast.success {
+      background: var(--green-glow);
+      border: 1px solid var(--green);
+      color: var(--green);
+    }
+
+    .toast.error {
+      background: var(--red-glow);
+      border: 1px solid var(--red);
+      color: var(--red);
+    }
+
+    @keyframes slideIn {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    @keyframes fadeOut {
+      to { opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-left">
+      <div class="header-logo">💬</div>
+      <div class="header-title">
+        <h1>Bot WhatsApp</h1>
+        <span>Prospecção de Clientes</span>
+      </div>
+    </div>
+    <div id="statusBadge" class="status-badge disconnected">
+      <div class="status-dot"></div>
+      <span id="statusText">Desconectado</span>
+    </div>
+  </div>
+
+  <!-- QR CODE -->
+  <div id="qrSection" class="qr-section">
+    <div class="qr-card">
+      <h2>📱 Conectar WhatsApp</h2>
+      <p>Escaneie o QR Code abaixo com o WhatsApp do seu celular</p>
+      <img id="qr-image" src="" alt="QR Code" width="260" height="260">
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="container">
+
+    <!-- STATS -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-value green" id="statEnviados">0</div>
+        <div class="stat-label">Enviados</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value red" id="statErros">0</div>
+        <div class="stat-label">Erros</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value blue" id="statTotal">0</div>
+        <div class="stat-label">Total na Fila</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value yellow" id="statPulados">0</div>
+        <div class="stat-label">Pulados</div>
+      </div>
+    </div>
+
+    <!-- CONFIG PANEL -->
+    <div class="card config-panel">
+      <div class="card-title"><span class="icon">⚙️</span> Configurações</div>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="tab-msg">Mensagem</button>
+        <button class="tab" data-tab="tab-numeros">Números</button>
+        <button class="tab" data-tab="tab-config">Anti-Ban</button>
+      </div>
+
+      <!-- TAB: Mensagem -->
+      <div class="tab-content active" id="tab-msg">
+        <div class="form-group">
+          <label>Mensagem Principal</label>
+          <textarea id="inputMensagem" placeholder="Digite sua mensagem de prospecção..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Variação 1 (opcional)</label>
+          <textarea id="inputVariacao1" placeholder="Uma variação da mensagem..." style="min-height:70px"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Variação 2 (opcional)</label>
+          <textarea id="inputVariacao2" placeholder="Outra variação da mensagem..." style="min-height:70px"></textarea>
+        </div>
+        <button class="btn btn-save" onclick="salvarConfig()">💾 Salvar Configurações</button>
+      </div>
+
+      <!-- TAB: Números -->
+      <div class="tab-content" id="tab-numeros">
+        <div class="form-group">
+          <label>Lista de Números (um por linha, formato: 5511999998888)</label>
+          <textarea class="numeros-area" id="inputNumeros" placeholder="5511999998888&#10;5521988887777&#10;5531977776666"></textarea>
+          <div class="numeros-count" id="numerosCount">0 números carregados</div>
+        </div>
+        <button class="btn btn-save" onclick="salvarNumeros()">💾 Salvar Números</button>
+      </div>
+
+      <!-- TAB: Anti-Ban -->
+      <div class="tab-content" id="tab-config">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Delay Mínimo (segundos)</label>
+            <input type="number" id="inputDelayMin" value="45" min="10">
+          </div>
+          <div class="form-group">
+            <label>Delay Máximo (segundos)</label>
+            <input type="number" id="inputDelayMax" value="180" min="30">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Máx. Mensagens / Sessão</label>
+            <input type="number" id="inputMaxMsg" value="40" min="1">
+          </div>
+          <div class="form-group">
+            <label>Pausa a cada X mensagens</label>
+            <input type="number" id="inputPausaCada" value="10" min="1">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Pausa Longa Mín. (minutos)</label>
+            <input type="number" id="inputPausaMin" value="5" min="1">
+          </div>
+          <div class="form-group">
+            <label>Pausa Longa Máx. (minutos)</label>
+            <input type="number" id="inputPausaMax" value="10" min="1">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Horário Início</label>
+            <input type="number" id="inputHoraInicio" value="8" min="0" max="23">
+          </div>
+          <div class="form-group">
+            <label>Horário Fim</label>
+            <input type="number" id="inputHoraFim" value="20" min="0" max="23">
+          </div>
+        </div>
+        <button class="btn btn-save" onclick="salvarConfig()">💾 Salvar Configurações</button>
+      </div>
+    </div>
+
+    <!-- LOG PANEL -->
+    <div class="card log-panel">
+      <div class="card-title"><span class="icon">📋</span> Log de Atividade</div>
+
+      <div class="log-container" id="logContainer">
+        <div class="log-entry info">
+          <span class="log-time">[--:--:--]</span>
+          <span class="log-msg">Aguardando conexão com o WhatsApp...</span>
+        </div>
+      </div>
+
+      <div class="progress-wrapper">
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
+        <div class="progress-text" id="progressText">0 / 0 mensagens</div>
+      </div>
+
+      <!-- BOTÕES DE CONTROLE -->
+      <div id="btnConnect" style="margin-top: 12px;">
+        <button class="btn btn-start" onclick="conectarWhatsApp()">📱 Conectar WhatsApp</button>
+      </div>
+
+      <div id="btnControls" style="display:none; margin-top: 12px;">
+        <div class="btn-group">
+          <button class="btn btn-start" id="btnIniciar" onclick="iniciarEnvio()">▶ Iniciar Envio</button>
+          <button class="btn btn-stop" id="btnParar" onclick="pararEnvio()" disabled>⏹ Parar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+
+    // ===== ESTADO =====
+    let stats = { enviados: 0, erros: 0, total: 0, pulados: 0 };
+    let botStatus = 'disconnected'; // disconnected, connected, sending, paused
+
+    // ===== TABS =====
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    // ===== CONTAR NÚMEROS =====
+    document.getElementById('inputNumeros').addEventListener('input', (e) => {
+      const nums = e.target.value.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
+      document.getElementById('numerosCount').textContent = `${nums.length} números carregados`;
+    });
+
+    // ===== SOCKET EVENTS =====
+    socket.on('connect', () => {
+      addLog('info', 'Conectado ao servidor');
+    });
+
+    socket.on('qr', (dataUrl) => {
+      document.getElementById('qrSection').classList.add('visible');
+      document.getElementById('qr-image').src = dataUrl;
+      addLog('info', 'QR Code gerado. Escaneie com o WhatsApp.');
+    });
+
+    socket.on('whatsapp-ready', () => {
+      document.getElementById('qrSection').classList.remove('visible');
+      document.getElementById('btnConnect').style.display = 'none';
+      document.getElementById('btnControls').style.display = 'block';
+      setStatus('connected');
+      addLog('sucesso', 'WhatsApp conectado e pronto!');
+    });
+
+    socket.on('whatsapp-authenticated', () => {
+      addLog('sucesso', 'Autenticado com sucesso!');
+    });
+
+    socket.on('whatsapp-disconnected', () => {
+      setStatus('disconnected');
+      document.getElementById('btnConnect').style.display = 'block';
+      document.getElementById('btnControls').style.display = 'none';
+      addLog('erro', 'WhatsApp desconectado.');
+    });
+
+    socket.on('log', (data) => {
+      addLog(data.tipo, data.msg);
+    });
+
+    socket.on('stats', (data) => {
+      stats = data;
+      document.getElementById('statEnviados').textContent = data.enviados;
+      document.getElementById('statErros').textContent = data.erros;
+      document.getElementById('statTotal').textContent = data.total;
+      document.getElementById('statPulados').textContent = data.pulados;
+
+      if (data.total > 0) {
+        const progresso = ((data.enviados + data.erros + data.pulados) / data.total * 100).toFixed(1);
+        document.getElementById('progressBar').style.width = progresso + '%';
+        document.getElementById('progressText').textContent =
+          `${data.enviados + data.erros + data.pulados} / ${data.total} mensagens (${progresso}%)`;
+      }
+    });
+
+    socket.on('status', (s) => {
+      setStatus(s);
+      if (s === 'sending') {
+        document.getElementById('btnIniciar').disabled = true;
+        document.getElementById('btnParar').disabled = false;
+      } else if (s === 'connected') {
+        document.getElementById('btnIniciar').disabled = false;
+        document.getElementById('btnParar').disabled = true;
+      }
+    });
+
+    socket.on('finished', () => {
+      setStatus('connected');
+      document.getElementById('btnIniciar').disabled = false;
+      document.getElementById('btnParar').disabled = true;
+      addLog('sucesso', '✅ Sessão de envio finalizada!');
+    });
+
+    socket.on('config-loaded', (cfg) => {
+      document.getElementById('inputMensagem').value = cfg.mensagem || '';
+      document.getElementById('inputVariacao1').value = (cfg.variacoesMensagem && cfg.variacoesMensagem[0]) || '';
+      document.getElementById('inputVariacao2').value = (cfg.variacoesMensagem && cfg.variacoesMensagem[1]) || '';
+      document.getElementById('inputDelayMin').value = Math.round((cfg.delayMinimo || 45000) / 1000);
+      document.getElementById('inputDelayMax').value = Math.round((cfg.delayMaximo || 180000) / 1000);
+      document.getElementById('inputMaxMsg').value = cfg.maxMensagensPorSessao || 40;
+      document.getElementById('inputPausaCada').value = cfg.pausaACadaXMensagens || 10;
+      document.getElementById('inputPausaMin').value = Math.round((cfg.pausaLongaMin || 300000) / 60000);
+      document.getElementById('inputPausaMax').value = Math.round((cfg.pausaLongaMax || 600000) / 60000);
+      document.getElementById('inputHoraInicio').value = cfg.horarioInicio || 8;
+      document.getElementById('inputHoraFim').value = cfg.horarioFim || 20;
+    });
+
+    socket.on('numeros-loaded', (numeros) => {
+      document.getElementById('inputNumeros').value = numeros;
+      const nums = numeros.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
+      document.getElementById('numerosCount').textContent = `${nums.length} números carregados`;
+    });
+
+    // ===== FUNÇÕES =====
+    function setStatus(status) {
+      botStatus = status;
+      const badge = document.getElementById('statusBadge');
+      const text = document.getElementById('statusText');
+      badge.className = 'status-badge ' + status;
+
+      const labels = {
+        disconnected: 'Desconectado',
+        connected: 'Conectado',
+        sending: 'Enviando...',
+        paused: 'Pausado',
+      };
+      text.textContent = labels[status] || status;
+    }
+
+    function addLog(tipo, msg) {
+      const container = document.getElementById('logContainer');
+      const now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + tipo;
+      entry.innerHTML = `<span class="log-time">[${now}]</span><span class="log-msg">${msg}</span>`;
+      container.appendChild(entry);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function showToast(msg, type = 'success') {
+      const existing = document.querySelector('.toast');
+      if (existing) existing.remove();
+      const toast = document.createElement('div');
+      toast.className = 'toast ' + type;
+      toast.textContent = msg;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+    }
+
+    function conectarWhatsApp() {
+      socket.emit('connect-whatsapp');
+      addLog('info', 'Iniciando conexão com WhatsApp...');
+    }
+
+    function salvarConfig() {
+      const cfg = {
+        mensagem: document.getElementById('inputMensagem').value,
+        variacoesMensagem: [
+          document.getElementById('inputVariacao1').value,
+          document.getElementById('inputVariacao2').value,
+        ].filter(v => v.trim()),
+        delayMinimo: parseInt(document.getElementById('inputDelayMin').value) * 1000,
+        delayMaximo: parseInt(document.getElementById('inputDelayMax').value) * 1000,
+        maxMensagensPorSessao: parseInt(document.getElementById('inputMaxMsg').value),
+        pausaACadaXMensagens: parseInt(document.getElementById('inputPausaCada').value),
+        pausaLongaMin: parseInt(document.getElementById('inputPausaMin').value) * 60000,
+        pausaLongaMax: parseInt(document.getElementById('inputPausaMax').value) * 60000,
+        horarioInicio: parseInt(document.getElementById('inputHoraInicio').value),
+        horarioFim: parseInt(document.getElementById('inputHoraFim').value),
+      };
+      socket.emit('save-config', cfg);
+      showToast('Configurações salvas!');
+      addLog('sucesso', 'Configurações atualizadas.');
+    }
+
+    function salvarNumeros() {
+      const numeros = document.getElementById('inputNumeros').value;
+      socket.emit('save-numeros', numeros);
+      showToast('Números salvos!');
+      addLog('sucesso', 'Lista de números atualizada.');
+    }
+
+    function iniciarEnvio() {
+      socket.emit('start-sending');
+      addLog('info', 'Iniciando envio de mensagens...');
+    }
+
+    function pararEnvio() {
+      socket.emit('stop-sending');
+      addLog('aviso', 'Parando envio...');
+    }
+
+    // Carregar dados ao conectar
+    socket.emit('load-config');
+    socket.emit('load-numeros');
+  </script>
+</body>
+</html>

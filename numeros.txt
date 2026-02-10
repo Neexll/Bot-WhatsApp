@@ -1,0 +1,9 @@
+# Lista de números para prospecção
+# Formato: código do país + DDD + número (sem espaços ou caracteres especiais)
+# Exemplo: 5511999998888
+# Linhas começando com # são ignoradas
+#
+# Cole seus números abaixo (um por linha):
+5511999998888
+5521988887777
+5531977776666
