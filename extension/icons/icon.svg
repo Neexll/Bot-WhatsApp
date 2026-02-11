@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="g" x1="40" y1="32" x2="216" y2="224" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22C55E"/>
+      <stop offset="1" stop-color="#16A34A"/>
+    </linearGradient>
+    <filter id="s" x="0" y="0" width="256" height="256" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Rounded app tile -->
+  <rect x="28" y="20" width="200" height="200" rx="44" fill="url(#g)" filter="url(#s)"/>
+
+  <!-- Chat bubble + lightning bolt (automation) -->
+  <path d="M78 92c0-16 13-29 29-29h48c16 0 29 13 29 29v26c0 16-13 29-29 29h-21l-23 20c-3 2-7 0-7-4v-16h-3c-16 0-29-13-29-29V92z" fill="#FFFFFF" fill-opacity="0.95"/>
+  <path d="M133 78l-14 27h16l-12 25 26-33h-16l10-19z" fill="#0F172A" fill-opacity="0.9"/>
+
+  <!-- Subtle inner highlight -->
+  <path d="M58 66c8-18 26-30 46-30h52c20 0 38 12 46 30" stroke="#FFFFFF" stroke-opacity="0.35" stroke-width="10" stroke-linecap="round"/>
+</svg>
