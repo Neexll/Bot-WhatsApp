@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Bot WhatsApp - Prospecção",
+  "name": "WhatsProspect - By @Neexll",
   "version": "1.0.0",
   "description": "Bot para prospecção de clientes no WhatsApp Web com medidas anti-ban",
   "icons": {
@@ -9,7 +9,7 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["storage"],
+  "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": ["https://web.whatsapp.com/*"],
   "background": {
     "service_worker": "background.js"

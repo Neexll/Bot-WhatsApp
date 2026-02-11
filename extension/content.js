@@ -1,5 +1,5 @@
 // =====================================================
-//  BOT WHATSAPP - EXTENSÃO CHROME
+//  WHATSPROSPECT - EXTENSÃO CHROME
 //  Content Script para web.whatsapp.com
 // =====================================================
 
@@ -13,6 +13,14 @@
 
   function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
+  }
+
+  let _cancelSleep = null;
+  function cancellableSleep(ms) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { _cancelSleep = null; resolve(); }, ms);
+      _cancelSleep = () => { clearTimeout(timer); _cancelSleep = null; resolve(); };
+    });
   }
 
   function randomEntre(min, max) {
@@ -88,9 +96,61 @@
   }
 
   async function navigateToChat(numero) {
-    // Usa a URL do WhatsApp Web para abrir conversa com o número
-    const url = `https://web.whatsapp.com/send?phone=${numero}`;
-    window.location.href = url;
+    // Busca o número na barra de pesquisa do WhatsApp (sem recarregar a página)
+    const searchBox = document.querySelector('#side div[contenteditable="true"][data-tab]') ||
+                      document.querySelector('#side div[contenteditable="true"]') ||
+                      document.querySelector('div[title="Caixa de texto de pesquisa"]') ||
+                      document.querySelector('div[title="Search input textbox"]');
+
+    if (searchBox) {
+      searchBox.focus();
+      // Limpar busca anterior
+      searchBox.textContent = '';
+      searchBox.dispatchEvent(new Event('input', { bubbles: true }));
+      await sleep(300);
+
+      // Digitar o número
+      document.execCommand('insertText', false, numero);
+      searchBox.dispatchEvent(new Event('input', { bubbles: true }));
+      await sleep(1500);
+
+      // Clicar no primeiro resultado
+      const results = document.querySelectorAll('#side span[title]');
+      for (const r of results) {
+        const title = r.getAttribute('title') || '';
+        if (title.includes(numero.replace('+', '')) || title.includes(numero)) {
+          r.closest('[role="listitem"], [data-testid="cell-frame-container"], [tabindex]')?.click() || r.click();
+          await sleep(500);
+          // Limpar busca
+          searchBox.textContent = '';
+          searchBox.dispatchEvent(new Event('input', { bubbles: true }));
+          return;
+        }
+      }
+
+      // Se não encontrou resultado exato, clicar no primeiro resultado disponível
+      const firstResult = document.querySelector('#side [role="listitem"]') ||
+                          document.querySelector('#side [data-testid="cell-frame-container"]');
+      if (firstResult) {
+        firstResult.click();
+        await sleep(500);
+        searchBox.textContent = '';
+        searchBox.dispatchEvent(new Event('input', { bubbles: true }));
+        return;
+      }
+
+      // Limpar busca se nada encontrado
+      searchBox.textContent = '';
+      searchBox.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    // Fallback: usar a API de URL via link temporário (SPA-friendly)
+    const a = document.createElement('a');
+    a.href = `https://web.whatsapp.com/send?phone=${numero}`;
+    a.target = '_self';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   async function waitForChatReady(timeout = 35000) {
@@ -151,42 +211,66 @@
     return { status: 'timeout' };
   }
 
-  async function typeMessage(element, text) {
+  async function typeMessage(element, text, totalTimeMs) {
     element.focus();
     await sleep(300);
 
-    // Método 1: execCommand (mais confiável com React)
-    document.execCommand('selectAll', false, null);
-    document.execCommand('delete', false, null);
-    document.execCommand('insertText', false, text);
+    // Limpar campo
+    element.textContent = '';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(200);
+
+    // Calcular delay por caractere
+    const totalChars = text.length;
+    const minDelay = 35;
+    const baseDelay = totalTimeMs ? Math.max(minDelay, totalTimeMs / totalChars) : 50;
+
+    // Digitar caractere por caractere
+    for (let i = 0; i < text.length; i++) {
+      if (shouldStop) return false;
+      const ch = text[i];
+
+      if (ch === '\n') {
+        // Shift+Enter para nova linha no WhatsApp Web
+        const enterDown = new KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+          shiftKey: true, bubbles: true, cancelable: true
+        });
+        element.dispatchEvent(enterDown);
+        await sleep(50);
+        const enterUp = new KeyboardEvent('keyup', {
+          key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+          shiftKey: true, bubbles: true, cancelable: true
+        });
+        element.dispatchEvent(enterUp);
+      } else {
+        // Inserir caractere normal
+        const inputEvent = new InputEvent('beforeinput', {
+          inputType: 'insertText', data: ch, bubbles: true, cancelable: true
+        });
+        element.dispatchEvent(inputEvent);
+        document.execCommand('insertText', false, ch);
+      }
+
+      // Delay variável para parecer humano (±40%)
+      const variation = baseDelay * (0.6 + Math.random() * 0.8);
+      await sleep(Math.round(variation));
+    }
 
     await sleep(300);
-
     // Verificar se o texto foi inserido
     if (element.textContent.trim().length > 0) return true;
 
-    // Método 2: fallback com InputEvent
+    // Fallback: colar via clipboard se digitação falhou
+    element.focus();
     element.textContent = '';
-    element.focus();
-    const dataTransfer = new DataTransfer();
-    dataTransfer.setData('text/plain', text);
-    element.dispatchEvent(
-      new ClipboardEvent('paste', {
-        clipboardData: dataTransfer,
-        bubbles: true,
-        cancelable: true,
-      })
-    );
+    await sleep(100);
+    const dt = new DataTransfer();
+    dt.setData('text/plain', text);
+    element.dispatchEvent(new ClipboardEvent('paste', {
+      clipboardData: dt, bubbles: true, cancelable: true
+    }));
     await sleep(300);
-
-    if (element.textContent.trim().length > 0) return true;
-
-    // Método 3: último fallback
-    element.focus();
-    element.textContent = text;
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    await sleep(300);
-
     return element.textContent.trim().length > 0;
   }
 
@@ -246,9 +330,9 @@
     }
 
     session.active = true;
-    session.stats = session.stats || { enviados: 0, erros: 0, pulados: 0, total: numeros.length };
-    session.stats.total = numeros.length;
-    session.currentIndex = session.currentIndex || 0;
+    session.stats = { enviados: 0, erros: 0, pulados: 0, total: numeros.length };
+    session.currentIndex = 0;
+    renderNumList(numeros, 0);
     await saveState({ session });
 
     updateControlButtons();
@@ -274,20 +358,8 @@
         break;
       }
 
-      // Horário
-      const horaAgora = new Date().getHours();
-      if (horaAgora < (config.horaInicio || 8) || horaAgora >= (config.horaFim || 20)) {
-        addLog('pausa', `Fora do horário (${config.horaInicio}h-${config.horaFim}h). Aguardando...`);
-        while (true) {
-          await sleep(60000);
-          const h = new Date().getHours();
-          if (h >= (config.horaInicio || 8) && h < (config.horaFim || 20)) break;
-          if (shouldStop) break;
-        }
-        if (shouldStop) break;
-      }
 
-      const numero = numeros[i].replace(/\D/g, '');
+      const numero = numeros[i].replace(/[^\d+]/g, '');
       if (!numero) {
         session.currentIndex = i + 1;
         await saveState({ session });
@@ -298,14 +370,10 @@
       updateProgress(i, numeros.length);
 
       // Navegar para o chat
-      navigateToChat(numero);
+      await navigateToChat(numero);
 
-      // Esperar chat carregar (a página pode recarregar aqui)
-      // Se a página recarregar, o content script será re-injetado
-      // e vai detectar a sessão ativa no storage para continuar
-      // Mas se for SPA routing (não recarrega), continuamos aqui
-
-      await sleep(3000); // Dar tempo para o WhatsApp processar a URL
+      await cancellableSleep(2000);
+      if (shouldStop) break;
 
       const result = await waitForChatReady(35000);
 
@@ -315,7 +383,8 @@
         session.currentIndex = i + 1;
         await saveState({ session });
         updateStats(session.stats);
-        await sleep(2000);
+        await cancellableSleep(2000);
+        if (shouldStop) break;
         continue;
       }
 
@@ -325,7 +394,8 @@
         session.currentIndex = i + 1;
         await saveState({ session });
         updateStats(session.stats);
-        await sleep(2000);
+        await cancellableSleep(2000);
+        if (shouldStop) break;
         continue;
       }
 
@@ -335,17 +405,15 @@
       );
       const msgEscolhida = todasMsg[randomEntre(0, todasMsg.length - 1)];
 
-      // Simular "digitando..."
-      const tempoDigitacao = randomEntre(
+      // Digitar mensagem caractere por caractere
+      const minTempoNecessario = msgEscolhida.length * 35; // 35ms mínimo por caractere
+      const tempoConfig = randomEntre(
         (config.digitacaoMin || 3) * 1000,
         (config.digitacaoMax || 8) * 1000
       );
+      const tempoDigitacao = Math.max(tempoConfig, minTempoNecessario);
       addLog('info', `Digitando por ${(tempoDigitacao / 1000).toFixed(1)}s...`);
-      await sleep(tempoDigitacao);
 
-      if (shouldStop) break;
-
-      // Digitar mensagem
       const input = getMessageInput();
       if (!input) {
         addLog('erro', `${numero} — input de mensagem não encontrado.`);
@@ -356,7 +424,7 @@
         continue;
       }
 
-      const typed = await typeMessage(input, msgEscolhida);
+      const typed = await typeMessage(input, msgEscolhida, tempoDigitacao);
       if (!typed) {
         addLog('erro', `${numero} — falha ao digitar mensagem.`);
         session.stats.erros++;
@@ -366,7 +434,8 @@
         continue;
       }
 
-      await sleep(500);
+      await cancellableSleep(500);
+      if (shouldStop) break;
 
       // Enviar
       const sent = await clickSend();
@@ -377,11 +446,13 @@
         msgSessao++;
         session.stats.enviados++;
         addLog('sucesso', `✔ Enviado para ${numero} (${msgSessao}/${config.maxPorSessao})`);
+        updateNumItemStatus(i, 'Enviado');
       }
 
       session.currentIndex = i + 1;
       await saveState({ session });
       updateStats(session.stats);
+      updateProgress(session.currentIndex, numeros.length);
 
       // Pausa longa a cada X mensagens
       if (
@@ -393,7 +464,10 @@
         const pausaMax = (config.pausaLongaMax || 10) * 60000;
         const pausa = randomEntre(pausaMin, pausaMax);
         addLog('pausa', `Pausa longa de ${(pausa / 60000).toFixed(1)} min (anti-ban)...`);
-        await sleep(pausa);
+        startCountdown(pausa, 'Pausa anti-ban...');
+        await cancellableSleep(pausa);
+        stopCountdown();
+        if (shouldStop) break;
       }
 
       // Delay entre mensagens
@@ -403,11 +477,14 @@
           (config.delayMax || 180) * 1000
         );
         addLog('info', `Aguardando ${(delay / 1000).toFixed(0)}s antes da próxima...`);
-        await sleep(delay);
+        startCountdown(delay, 'Próximo envio em...');
+        await cancellableSleep(delay);
+        stopCountdown();
       }
     }
 
     // Finalizar
+    stopCountdown();
     automationRunning = false;
     session.active = false;
     await saveState({ session });
@@ -419,9 +496,56 @@
     );
   }
 
+  let _timerInterval = null;
+
+  function startCountdown(ms, label) {
+    const timerEl = $('#numTimer');
+    const timerLabel = $('#timerLabel');
+    const timerBar = $('#timerBar');
+    const timerTime = $('#timerTime');
+    if (!timerEl) return;
+
+    timerEl.style.display = '';
+    timerLabel.textContent = label || 'Próximo envio em...';
+    timerBar.style.width = '100%';
+
+    const totalSec = Math.ceil(ms / 1000);
+    let remaining = totalSec;
+
+    const formatTime = (s) => {
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    };
+
+    timerTime.textContent = formatTime(remaining);
+
+    clearInterval(_timerInterval);
+    _timerInterval = setInterval(() => {
+      remaining--;
+      if (remaining <= 0) {
+        clearInterval(_timerInterval);
+        _timerInterval = null;
+        timerEl.style.display = 'none';
+        return;
+      }
+      timerTime.textContent = formatTime(remaining);
+      timerBar.style.width = `${(remaining / totalSec) * 100}%`;
+    }, 1000);
+  }
+
+  function stopCountdown() {
+    clearInterval(_timerInterval);
+    _timerInterval = null;
+    const timerEl = shadow?.querySelector('#numTimer');
+    if (timerEl) timerEl.style.display = 'none';
+  }
+
   function stopAutomation() {
     shouldStop = true;
-    addLog('aviso', 'Parando após a operação atual...');
+    if (_cancelSleep) _cancelSleep();
+    stopCountdown();
+    addLog('aviso', 'Parando envio...');
   }
 
   // ===== VERIFICAR SESSÃO ATIVA (retomar após reload) =====
@@ -431,55 +555,11 @@
     const session = state.session;
 
     if (session && session.active) {
-      // Há uma sessão ativa — o content script foi recarregado durante o envio
-      addLog('info', 'Sessão ativa detectada. Retomando envio...');
+      // Sessão ficou ativa por causa de um reload — resetar flag
+      addLog('aviso', 'Sessão anterior detectada. Clique em Iniciar para retomar.');
+      session.active = false;
+      await saveState({ session });
       updateStats(session.stats);
-
-      // Esperar WhatsApp carregar
-      await sleep(3000);
-
-      // Verificar se estamos numa URL /send?phone=
-      const urlParams = new URLSearchParams(window.location.search);
-      const phone = urlParams.get('phone');
-
-      if (phone) {
-        // Estamos no meio de um envio — esperar chat carregar e enviar
-        const result = await waitForChatReady(35000);
-
-        if (result.status === 'ready') {
-          const config = state.config || {};
-          const todasMsg = [config.mensagem, ...(config.variacoes || [])].filter(
-            (m) => m && m.trim()
-          );
-          const msgEscolhida = todasMsg[randomEntre(0, todasMsg.length - 1)];
-
-          const tempoDigitacao = randomEntre(
-            (config.digitacaoMin || 3) * 1000,
-            (config.digitacaoMax || 8) * 1000
-          );
-          await sleep(tempoDigitacao);
-
-          const input = getMessageInput();
-          if (input) {
-            await typeMessage(input, msgEscolhida);
-            await sleep(500);
-            await clickSend();
-            session.stats.enviados++;
-            addLog('sucesso', `✔ Enviado para ${phone} (retomado)`);
-          }
-        } else {
-          session.stats.pulados++;
-          addLog('aviso', `${phone} — não foi possível enviar (${result.status}).`);
-        }
-
-        session.currentIndex++;
-        await saveState({ session });
-        updateStats(session.stats);
-      }
-
-      // Continuar com o resto da fila
-      await sleep(2000);
-      startAutomation();
     }
   }
 
@@ -724,10 +804,120 @@
   }
 
   .num-count {
+    font-size: 12px;
+    color: #8696a0;
+    margin-bottom: 8px;
+  }
+  .num-btn-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .btn-num-action {
+    background: #2a3942;
+    border: 1px solid #313d45;
+    border-radius: 6px;
+    padding: 7px 16px;
+    color: #e9edef;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-num-action:hover { background: #313d45; }
+  .btn-num-clear { color: #8696a0; }
+  .btn-num-clear:hover { border-color: #ff4d6a; color: #ff4d6a; }
+  .num-timer {
+    background: #1a2730;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+  .timer-label {
     font-size: 11px;
     color: #8696a0;
-    margin-top: 4px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    font-weight: 600;
   }
+  .timer-bar-bg {
+    width: 100%;
+    height: 4px;
+    background: #313d45;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 4px;
+  }
+  .timer-bar {
+    height: 100%;
+    background: #00a884;
+    border-radius: 2px;
+    width: 100%;
+    transition: width 1s linear;
+  }
+  .timer-time {
+    font-size: 18px;
+    font-weight: 700;
+    color: #e9edef;
+    text-align: center;
+  }
+  .num-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .num-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: #1a2730;
+    border-radius: 8px;
+    transition: background 0.15s;
+  }
+  .num-item:hover { background: #1e2f38; }
+  .num-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .num-info {
+    flex: 1;
+    font-size: 13px;
+    color: #e9edef;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .num-status {
+    font-size: 11px;
+    color: #8696a0;
+    flex-shrink: 0;
+  }
+  .num-status.sent { color: #00a884; }
+  .num-status.error { color: #ff4d6a; }
+  .num-remove {
+    background: none;
+    border: none;
+    color: #8696a0;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px 4px;
+    flex-shrink: 0;
+    transition: color 0.15s;
+  }
+  .num-remove:hover { color: #ff4d6a; }
 
   /* Buttons */
   .btn {
@@ -745,12 +935,79 @@
 
   .btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
+  .btn-add {
+    background: transparent;
+    border: 1px dashed #8696a0;
+    color: #8696a0;
+    margin-bottom: 8px;
+  }
+  .btn-add:hover { border-color: #00a884; color: #00a884; }
+
+  .var-item { margin-bottom: 10px; }
+  .var-item .form-group { margin-bottom: 0; }
+  .var-item textarea {
+    width: 100%;
+    background: #1a2730;
+    border: 1px solid #313d45;
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: #e9edef;
+    font-family: inherit;
+    font-size: 13px;
+    outline: none;
+    min-height: 80px;
+    resize: vertical;
+    transition: border-color 0.2s;
+  }
+  .var-item textarea:focus { border-color: #00a884; }
+  .var-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+  }
+  .var-header label { font-size: 11px; font-weight: 600; color: #8696a0; text-transform: uppercase; letter-spacing: 0.3px; }
+  .var-remove {
+    background: none;
+    border: none;
+    color: #ff4d6a;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .var-remove:hover { background: rgba(255,77,106,0.15); }
+
   .btn-save {
     background: #2a3942;
     color: #53bdeb;
     border: 1px solid #313d45;
+    transition: all 0.3s ease;
   }
   .btn-save:hover:not(:disabled) { background: #313d45; }
+  .btn-save.btn-success {
+    background: #00a884;
+    color: #111b21;
+    border-color: #00a884;
+    animation: btnPop 0.3s ease;
+  }
+  .btn-reset.btn-success {
+    background: #00a884;
+    color: #111b21;
+    border-color: #00a884;
+    animation: btnPop 0.3s ease;
+  }
+  .btn-default {
+    background: transparent;
+    color: #8696a0;
+    border: 1px solid #313d45;
+  }
+  .btn-default:hover { border-color: #53bdeb; color: #53bdeb; }
+  @keyframes btnPop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+  }
 
   .btn-start {
     background: #00a884;
@@ -874,8 +1131,8 @@
     <div class="panel-header-left">
       <div class="icon">💬</div>
       <div>
-        <h2>Bot WhatsApp</h2>
-        <div class="sub">Prospecção</div>
+        <h2>WhatsProspect</h2>
+        <div class="sub">By @Neexll</div>
       </div>
     </div>
     <div class="status-pill idle" id="statusPill">
@@ -921,25 +1178,27 @@
         <label>Mensagem Principal</label>
         <textarea id="inMsg" placeholder="Digite sua mensagem..."></textarea>
       </div>
-      <div class="form-group">
-        <label>Variação 1 (opcional)</label>
-        <textarea id="inVar1" placeholder="Uma variação..." style="min-height:55px"></textarea>
-      </div>
-      <div class="form-group">
-        <label>Variação 2 (opcional)</label>
-        <textarea id="inVar2" placeholder="Outra variação..." style="min-height:55px"></textarea>
-      </div>
+      <div id="varContainer"></div>
+      <button class="btn btn-add" id="btnAddVar">＋ Adicionar Variação</button>
       <button class="btn btn-save" id="btnSaveMsg">💾 Salvar Mensagem</button>
     </div>
 
     <!-- Números -->
     <div class="tab-pane" id="tabNums">
+      <div class="num-count" id="numCount">0 contatos</div>
       <div class="form-group">
-        <label>Lista de Números (um por linha)</label>
-        <textarea id="inNums" placeholder="5511999998888&#10;5521988887777&#10;5531977776666" style="min-height:200px;font-family:Consolas,monospace;"></textarea>
-        <div class="num-count" id="numCount">0 números</div>
+        <textarea id="inNums" placeholder="Cole números (um por linha)&#10;+5511999998888&#10;+5521988887777" style="min-height:100px;font-family:Consolas,monospace;"></textarea>
       </div>
-      <button class="btn btn-save" id="btnSaveNums">💾 Salvar Números</button>
+      <div class="num-btn-row">
+        <button class="btn-num-action" id="btnNumAdd">+ Adicionar</button>
+        <button class="btn-num-action btn-num-clear" id="btnNumClear">Limpar</button>
+      </div>
+      <div class="num-timer" id="numTimer" style="display:none">
+        <div class="timer-label" id="timerLabel">Próximo envio em...</div>
+        <div class="timer-bar-bg"><div class="timer-bar" id="timerBar"></div></div>
+        <div class="timer-time" id="timerTime">00:00</div>
+      </div>
+      <div class="num-list" id="numList"></div>
     </div>
 
     <!-- Config -->
@@ -984,18 +1243,9 @@
           <input type="number" id="cfgPausaMax" value="10" min="1">
         </div>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Hora Início</label>
-          <input type="number" id="cfgHoraIni" value="8" min="0" max="23">
-        </div>
-        <div class="form-group">
-          <label>Hora Fim</label>
-          <input type="number" id="cfgHoraFim" value="20" min="0" max="23">
-        </div>
-      </div>
       <button class="btn btn-save" id="btnSaveCfg">💾 Salvar Configurações</button>
-      <button class="btn btn-reset" id="btnReset">🔄 Resetar Progresso</button>
+      <button class="btn btn-default" id="btnDefault">⚙ Padrão Recomendado</button>
+      <button class="btn btn-reset" id="btnReset">🔄 Resetar Configuração</button>
     </div>
 
     <!-- Log -->
@@ -1034,6 +1284,79 @@
   const $ = (sel) => shadow.querySelector(sel);
   const $$ = (sel) => shadow.querySelectorAll(sel);
 
+  const avatarColors = ['#6b5ce7', '#e6a817', '#e74c3c', '#2ecc71', '#3498db', '#e67e22', '#1abc9c', '#9b59b6'];
+
+  function renderNumList(numeros, sentIndex) {
+    const list = $('#numList');
+    list.innerHTML = '';
+    $('#numCount').textContent = `${numeros.length} contatos`;
+    const sent = typeof sentIndex === 'number' ? sentIndex : 0;
+    numeros.forEach((num, idx) => {
+      const item = document.createElement('div');
+      item.className = 'num-item';
+      item.setAttribute('data-idx', idx);
+      const color = avatarColors[idx % avatarColors.length];
+      const letter = num.replace(/[^a-zA-Z0-9]/g, '').charAt(0).toUpperCase() || '#';
+      const isSent = idx < sent;
+      item.innerHTML = `
+        <div class="num-avatar" style="background:${color}">${letter}</div>
+        <div class="num-info">${num}</div>
+        <div class="num-status ${isSent ? 'sent' : ''}">${isSent ? 'Enviado' : 'Pendente'}</div>
+        <button class="num-remove" title="Remover">✕</button>
+      `;
+      item.querySelector('.num-remove').addEventListener('click', async () => {
+        const state = await getState();
+        const nums = state.numeros || [];
+        const sess = state.session || {};
+        nums.splice(idx, 1);
+        // Ajustar currentIndex se removeu um já enviado
+        if (sess.currentIndex && idx < sess.currentIndex) {
+          sess.currentIndex = Math.max(0, sess.currentIndex - 1);
+          await saveState({ numeros: nums, session: sess });
+        } else {
+          await saveState({ numeros: nums });
+        }
+        renderNumList(nums, sess.currentIndex || 0);
+        updateProgress(sess.currentIndex || 0, nums.length);
+        if (sess.stats) {
+          sess.stats.total = nums.length;
+          updateStats(sess.stats);
+        }
+      });
+      list.appendChild(item);
+    });
+  }
+
+  function updateNumItemStatus(idx, status) {
+    const item = shadow.querySelector(`.num-item[data-idx="${idx}"]`);
+    if (!item) return;
+    const el = item.querySelector('.num-status');
+    if (el) {
+      el.textContent = status;
+      el.className = 'num-status' + (status === 'Enviado' ? ' sent' : status === 'Erro' ? ' error' : '');
+    }
+  }
+
+  function addVariationField(container, value, num) {
+    const wrap = document.createElement('div');
+    wrap.className = 'var-item';
+    wrap.innerHTML = `
+      <div class="var-header">
+        <label>Variação ${num} (opcional)</label>
+        <button class="var-remove" title="Remover">✕</button>
+      </div>
+      <textarea placeholder="Digite uma variação da mensagem...">${value || ''}</textarea>
+    `;
+    wrap.querySelector('.var-remove').addEventListener('click', () => {
+      wrap.remove();
+      // Renumerar
+      [...container.querySelectorAll('.var-item')].forEach((item, idx) => {
+        item.querySelector('label').textContent = `Variação ${idx + 1} (opcional)`;
+      });
+    });
+    container.appendChild(wrap);
+  }
+
   function setupUI() {
     // Toggle panel
     $('#toggleBtn').addEventListener('click', () => {
@@ -1041,6 +1364,16 @@
       const btn = $('#toggleBtn');
       panel.classList.toggle('open');
       btn.classList.toggle('open');
+    });
+
+    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      if (!msg || msg.type !== 'OPEN_PANEL') return false;
+      const panel = $('#panel');
+      const btn = $('#toggleBtn');
+      if (panel) panel.classList.add('open');
+      if (btn) btn.classList.add('open');
+      sendResponse({ ok: true });
+      return true;
     });
 
     // Tabs
@@ -1053,12 +1386,37 @@
       });
     });
 
-    // Contar números
-    $('#inNums').addEventListener('input', () => {
-      const count = $('#inNums')
-        .value.split('\n')
-        .filter((l) => l.trim() && !l.trim().startsWith('#')).length;
-      $('#numCount').textContent = `${count} números`;
+    // Adicionar variação
+    $('#btnAddVar').addEventListener('click', () => {
+      const container = $('#varContainer');
+      const count = container.querySelectorAll('.var-item').length;
+      addVariationField(container, '', count + 1);
+    });
+
+    // Adicionar números do textarea à lista
+    $('#btnNumAdd').addEventListener('click', async () => {
+      const raw = $('#inNums').value;
+      const novos = raw.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+      if (novos.length === 0) return;
+      const state = await getState();
+      const numeros = state.numeros || [];
+      const session = state.session || {};
+      numeros.push(...novos);
+      await saveState({ numeros });
+      renderNumList(numeros, session.currentIndex || 0);
+      updateProgress(session.currentIndex || 0, numeros.length);
+      if (session.stats) {
+        session.stats.total = numeros.length;
+        updateStats(session.stats);
+      }
+      $('#inNums').value = '';
+    });
+
+    // Limpar todos
+    $('#btnNumClear').addEventListener('click', async () => {
+      await saveState({ numeros: [] });
+      renderNumList([], 0);
+      updateProgress(0, 0);
     });
 
     // Salvar mensagem
@@ -1066,20 +1424,9 @@
       const state = await getState();
       const config = state.config || {};
       config.mensagem = $('#inMsg').value;
-      config.variacoes = [$('#inVar1').value, $('#inVar2').value].filter((v) => v.trim());
+      config.variacoes = [...$$('#varContainer textarea')].map((t) => t.value).filter((v) => v.trim());
       await saveState({ config });
-      showToast('Mensagem salva!');
-    });
-
-    // Salvar números
-    $('#btnSaveNums').addEventListener('click', async () => {
-      const raw = $('#inNums').value;
-      const numeros = raw
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l && !l.startsWith('#'));
-      await saveState({ numeros });
-      showToast(`${numeros.length} números salvos!`);
+      flashButton($('#btnSaveMsg'), '✔ Salvo com sucesso!');
     });
 
     // Salvar config
@@ -1094,26 +1441,47 @@
       config.pausaCada = parseInt($('#cfgPausaCada').value) || 10;
       config.pausaLongaMin = parseInt($('#cfgPausaMin').value) || 5;
       config.pausaLongaMax = parseInt($('#cfgPausaMax').value) || 10;
-      config.horaInicio = parseInt($('#cfgHoraIni').value) || 8;
-      config.horaFim = parseInt($('#cfgHoraFim').value) || 20;
       await saveState({ config });
-      showToast('Configurações salvas!');
+      flashButton($('#btnSaveCfg'), '✔ Salvo com sucesso!');
     });
 
-    // Resetar progresso
+    // Resetar configuração
     $('#btnReset').addEventListener('click', async () => {
-      const session = {
-        active: false,
-        currentIndex: 0,
-        stats: { enviados: 0, erros: 0, pulados: 0, total: 0 },
-        logs: [],
+      $('#cfgDelayMin').value = '';
+      $('#cfgDelayMax').value = '';
+      $('#cfgDigMin').value = '';
+      $('#cfgDigMax').value = '';
+      $('#cfgMaxSessao').value = '';
+      $('#cfgPausaCada').value = '';
+      $('#cfgPausaMin').value = '';
+      $('#cfgPausaMax').value = '';
+      const config = {
+        mensagem: '',
+        variacoes: [],
+        delayMin: 0,
+        delayMax: 0,
+        digitacaoMin: 0,
+        digitacaoMax: 0,
+        maxPorSessao: 0,
+        pausaCada: 0,
+        pausaLongaMin: 0,
+        pausaLongaMax: 0,
       };
-      await saveState({ session });
-      updateStats(session.stats);
-      updateProgress(0, 0);
-      $('#logBox').innerHTML = '';
-      addLog('info', 'Progresso resetado.');
-      showToast('Progresso resetado!');
+      await saveState({ config });
+      flashButton($('#btnReset'), '✔ Resetado!');
+    });
+
+    // Padrão recomendado
+    $('#btnDefault').addEventListener('click', () => {
+      $('#cfgDelayMin').value = 45;
+      $('#cfgDelayMax').value = 180;
+      $('#cfgDigMin').value = 3;
+      $('#cfgDigMax').value = 8;
+      $('#cfgMaxSessao').value = 40;
+      $('#cfgPausaCada').value = 10;
+      $('#cfgPausaMin').value = 5;
+      $('#cfgPausaMax').value = 10;
+      flashButton($('#btnDefault'), '✔ Valores restaurados!');
     });
 
     // Iniciar
@@ -1189,6 +1557,18 @@
     }
   }
 
+  function flashButton(btn, msg, duration = 1800) {
+    const original = btn.textContent;
+    btn.textContent = msg;
+    btn.classList.add('btn-success');
+    btn.disabled = true;
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.classList.remove('btn-success');
+      btn.disabled = false;
+    }, duration);
+  }
+
   function showToast(msg, type = 'success') {
     const existing = shadow.querySelector('.toast');
     if (existing) existing.remove();
@@ -1208,12 +1588,24 @@
 
     // Mensagem
     $('#inMsg').value = config.mensagem || '';
-    $('#inVar1').value = (config.variacoes && config.variacoes[0]) || '';
-    $('#inVar2').value = (config.variacoes && config.variacoes[1]) || '';
+    // Carregar variações dinâmicas
+    const container = $('#varContainer');
+    container.innerHTML = '';
+    const vars = config.variacoes || [];
+    if (vars.length === 0) {
+      addVariationField(container, '', 1);
+    } else {
+      vars.forEach((v, idx) => addVariationField(container, v, idx + 1));
+    }
 
     // Números
-    $('#inNums').value = numeros.join('\n');
-    $('#numCount').textContent = `${numeros.length} números`;
+    renderNumList(numeros, session.currentIndex || 0);
+
+    // Progress
+    updateProgress(session.currentIndex || 0, numeros.length);
+    if (session.stats) {
+      session.stats.total = numeros.length;
+    }
 
     // Config
     $('#cfgDelayMin').value = config.delayMin || 45;
@@ -1224,8 +1616,6 @@
     $('#cfgPausaCada').value = config.pausaCada || 10;
     $('#cfgPausaMin').value = config.pausaLongaMin || 5;
     $('#cfgPausaMax').value = config.pausaLongaMax || 10;
-    $('#cfgHoraIni').value = config.horaInicio || 8;
-    $('#cfgHoraFim').value = config.horaFim || 20;
 
     // Stats
     if (session.stats) updateStats(session.stats);
